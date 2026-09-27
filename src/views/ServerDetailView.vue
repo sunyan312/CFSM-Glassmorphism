@@ -15,6 +15,7 @@ import { resolveRegionCoordinates } from '@/domain/advanced-tools'
 import { issueCopy } from '@/domain/issue-copy'
 import { resolveNodeProvider } from '@/domain/provider'
 import { needsExchangeRate } from '@/domain/finance'
+import { calculateTraffic24h } from '@/domain/traffic24h'
 import { buildDetailCards, parseTrafficLimitBytes, resolveDetailCardKeys, trafficUsageBytes } from '@/domain/theme-presentation'
 import { hasMultipleSources, serverDetailLocation } from '@/router/links'
 import { getCpuBenchmarkRating, getPassMarkCpuLookupUrl } from '@/utils/cpu-benchmark'
@@ -28,6 +29,7 @@ import { flagUrl, hideMissingFlag } from '@/utils/flags'
 import { useAppStore } from '@/stores/app'
 import { useFinanceStore } from '@/stores/finance'
 import { useServerDetailStore } from '@/stores/server-detail'
+import { useTraffic24hStore } from '@/stores/traffic24h'
 import { useThemeSettingsStore } from '@/stores/theme-settings'
 import {
   formatCount,
@@ -42,6 +44,7 @@ const route = useRoute()
 const router = useRouter()
 const app = useAppStore()
 const detail = useServerDetailStore()
+const trafficStore = useTraffic24hStore()
 const theme = useThemeSettingsStore()
 const finance = useFinanceStore()
 const preferences = useDashboardPreferencesStore()
@@ -62,6 +65,7 @@ const {
   timedOut,
   paused,
 } = storeToRefs(detail)
+const { points: traffic24hPoints, state: traffic24hState } = storeToRefs(trafficStore)
 const mounted = ref(false)
 
 const routeId = computed(() => (
@@ -400,6 +404,7 @@ const trafficProgressTone = computed(() => {
   if (percent >= 60) return 'is-warning'
   return 'is-ok'
 })
+const traffic24h = computed(() => calculateTraffic24h(traffic24hPoints.value, server.value))
 
 async function loadCurrent(): Promise<void> {
   if (!mounted.value || routeId.value === '') return
@@ -408,8 +413,17 @@ async function loadCurrent(): Promise<void> {
 }
 
 async function refresh(): Promise<void> {
-  await detail.refresh()
+  await Promise.all([detail.refresh(), trafficStore.refresh()])
 }
+
+watch(
+  () => server.value ? `${server.value.source.base}::${server.value.id}` : null,
+  (key) => {
+    if (key === null || !server.value) trafficStore.close()
+    else trafficStore.open(server.value.id, server.value.source.base)
+  },
+  { immediate: true },
+)
 
 // 通过 Turnstile 人机验证后重新拉取数据：节点若因 403 从未载入就重新打开，否则按原有刷新路径更新；
 // 顶部节点选择器依赖的列表同样被拒绝过，为空时按挂载时的规则补取。
@@ -460,7 +474,10 @@ watch([server, siteTitle], () => {
   document.title = title ?? ''
 }, { immediate: true })
 
-onUnmounted(() => detail.close())
+onUnmounted(() => {
+  detail.close()
+  trafficStore.close()
+})
 </script>
 
 <template>
@@ -753,6 +770,17 @@ onUnmounted(() => detail.close())
                     <span class="network-up"><AppIcon name="tabler:chevron-up" :size="12" />{{ formatDisplaySpeed(server.networkOutSpeed) }}</span>
                     <span class="network-down"><AppIcon name="tabler:chevron-down" :size="12" />{{ formatDisplaySpeed(server.networkInSpeed) }}</span>
                   </strong>
+                </div>
+                <div class="detail-network-card detail-network-card--daily">
+                  <span class="detail-network-card__head">
+                    <span><AppIcon name="icon-park-outline:transfer-data" :size="14" />近 24 小时流量</span>
+                    <small>历史采样估算</small>
+                  </span>
+                  <strong>{{ traffic24h ? formatDisplayBytes(traffic24h.total) : traffic24hState === 'loading' ? '统计中…' : MISSING_TEXT }}</strong>
+                  <span v-if="traffic24h" class="detail-network-card__daily-breakdown">
+                    <span class="network-down"><AppIcon name="tabler:chevron-down" :size="12" />下载 {{ formatDisplayBytes(traffic24h.received) }}</span>
+                    <span class="network-up"><AppIcon name="tabler:chevron-up" :size="12" />上传 {{ formatDisplayBytes(traffic24h.transmitted) }}</span>
+                  </span>
                 </div>
               </div>
             </article>

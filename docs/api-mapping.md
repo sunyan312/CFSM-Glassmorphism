@@ -19,6 +19,8 @@ apiBase 的来源是 HTML 中可选的 `<meta name="apiBase" content="https://a.
 
 Transport 位于 `src/services/cfsm/http.ts`，endpoint orchestration 位于 `src/services/cfsm/api.ts`，所有 wire payload 都在 `src/services/cfsm/adapters.ts` 从 `unknown` 转为领域类型。Vue 组件不直接调用 `fetch`。
 
+近 24 小时流量在详情页额外读取一次 `GET /api/history/all?hours=24`，仍使用节点所属的 apiBase。适配层读取历史行的网卡累计字节 `net_rx` / `net_tx`；`traffic24h` store 每 5 分钟更新，领域函数对相邻采样求正差，并在计数器重置时跳过该段。该功能需要 CFSM Worker 的历史接口返回这两列，缺少足够真实采样时显示缺失值。月累计计数器可能因探针校正而跳变，不用于这个统计。
+
 v1.1.12 维护预览只收敛请求生命周期：默认 15 秒超时和调用方取消持续到响应体读取完成，响应流中断使用既有 `networkError` 分类。端点、鉴权、状态码、请求参数与 probe 三态不变；没有新增轮询或写接口。
 
 ## 第三方汇率数据源（v1.1.7）

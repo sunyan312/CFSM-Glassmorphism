@@ -12,7 +12,10 @@ function installLocation(): void {
   vi.stubGlobal('window', { location: { origin: BASE } })
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe('application config initialization', () => {
   it('shares one in-flight /api/config request across concurrent route initializers', async () => {
@@ -68,5 +71,60 @@ describe('application config initialization', () => {
     expect(app.config?.siteTitle).toBe('已加载站点')
     expect(app.state).toBe('error')
     expect(app.error).toBe('CFSM request could not be completed')
+  })
+
+  it('keeps the error state visible while a manual retry is in flight', async () => {
+    installLocation()
+    let release: ((response: Response) => void) | undefined
+    let calls = 0
+    vi.stubGlobal('fetch', () => {
+      calls += 1
+      if (calls === 1) return Promise.reject(new TypeError('offline'))
+      return new Promise<Response>((resolve) => { release = resolve })
+    })
+    setActivePinia(createPinia())
+    const app = useAppStore()
+
+    await app.initialize()
+    expect(app.state).toBe('error')
+
+    const retry = app.initialize()
+    expect(app.state).toBe('error')
+    expect(app.error).toBe('CFSM request could not be completed')
+
+    release?.(new Response(JSON.stringify({ site_title: '恢复的站点' }), { status: 200 }))
+    await retry
+    expect(app.state).toBe('ready')
+    expect(app.config?.siteTitle).toBe('恢复的站点')
+  })
+
+  it('retries a timed-out config read in the background and clears the warning on recovery', async () => {
+    vi.useFakeTimers()
+    installLocation()
+    let calls = 0
+    vi.stubGlobal('fetch', (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1
+      if (calls === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        })
+      }
+      return Promise.resolve(new Response(JSON.stringify({ site_title: '恢复的站点' }), { status: 200 }))
+    })
+    setActivePinia(createPinia())
+    const app = useAppStore()
+
+    const first = app.initialize()
+    await vi.advanceTimersByTimeAsync(15_000)
+    await first
+    expect(app.state).toBe('error')
+    expect(app.error).toBe('CFSM request timed out')
+    expect(calls).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls).toBe(2)
+    expect(app.state).toBe('ready')
+    expect(app.error).toBeNull()
+    expect(app.config?.siteTitle).toBe('恢复的站点')
   })
 })

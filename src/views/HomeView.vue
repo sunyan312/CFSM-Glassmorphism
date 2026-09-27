@@ -326,6 +326,9 @@ onUnmounted(() => realtime.stop())
         >
           <strong>站点配置读取失败</strong>
           <span>{{ app.error }}。节点数据仍会独立尝试加载。</span>
+          <button type="button" @click="app.initialize()">
+            重试读取配置
+          </button>
         </div>
 
         <div

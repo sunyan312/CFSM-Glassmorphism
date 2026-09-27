@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { SiteConfig } from '@/types/cfsm'
-import { adminUrl, fetchSiteConfig, getApiBases, onTurnstileRejected, verifyTurnstileToken } from '@/services/cfsm'
+import { CfsmRequestError, adminUrl, fetchSiteConfig, getApiBases, onTurnstileRejected, verifyTurnstileToken } from '@/services/cfsm'
 import { turnstileChallengeSiteKey } from '@/domain/turnstile'
 
 export type LoadState = 'idle' | 'loading' | 'ready' | 'partial' | 'error'
@@ -17,6 +17,25 @@ export const useAppStore = defineStore('app', () => {
   const error = ref<string | null>(null)
   let initializeInFlight: Promise<void> | null = null
   let initializeRevision = 0
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let timeoutRetryCount = 0
+  const retryDelaysMs = [2_000, 5_000, 15_000]
+
+  function clearRetryTimer(): void {
+    if (retryTimer !== null) clearTimeout(retryTimer)
+    retryTimer = null
+  }
+
+  function scheduleTimeoutRetry(): void {
+    const delay = retryDelaysMs[timeoutRetryCount]
+    if (delay === undefined) return
+    timeoutRetryCount += 1
+    clearRetryTimer()
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      if (state.value === 'error') void beginInitialize(true)
+    }, delay)
+  }
 
   const primaryBase = computed(() => apiBases.value[0] ?? null)
   const administrationUrl = computed(() => (
@@ -49,9 +68,12 @@ export const useAppStore = defineStore('app', () => {
     return config.value?.verified === true
   }
 
-  async function performInitialize(expectedRevision: number): Promise<void> {
-    state.value = 'loading'
-    error.value = null
+  async function performInitialize(expectedRevision: number, background: boolean): Promise<void> {
+    // A background retry keeps the error visible and lets independently loaded nodes stay on screen.
+    if (!background) {
+      state.value = 'loading'
+      error.value = null
+    }
 
     try {
       apiBases.value = getApiBases()
@@ -61,19 +83,29 @@ export const useAppStore = defineStore('app', () => {
       if (expectedRevision !== initializeRevision) return
       config.value = nextConfig
       state.value = 'ready'
+      error.value = null
+      timeoutRetryCount = 0
+      clearRetryTimer()
     } catch (reason) {
       if (expectedRevision !== initializeRevision) return
       // 手动刷新失败时保留上一次真实配置；冷启动本来就是 null，仍按失败态走 fallback。
       state.value = 'error'
       error.value = errorMessage(reason)
+      if (reason instanceof CfsmRequestError && reason.code === 'timeout') {
+        scheduleTimeoutRetry()
+      }
     }
   }
 
-  function initialize(): Promise<void> {
+  function beginInitialize(background: boolean): Promise<void> {
     // 首页离开时请求不会被销毁；详情/设置若在它完成前接手，复用同一个配置请求。
     if (initializeInFlight) return initializeInFlight
+    if (!background) {
+      timeoutRetryCount = 0
+      clearRetryTimer()
+    }
     const expectedRevision = ++initializeRevision
-    const pending = performInitialize(expectedRevision)
+    const pending = performInitialize(expectedRevision, background)
     initializeInFlight = pending
     void pending.then(
       () => {
@@ -86,10 +118,17 @@ export const useAppStore = defineStore('app', () => {
     return pending
   }
 
+  function initialize(): Promise<void> {
+    // Retrying after an error must not put already loaded nodes behind the cold-start skeleton.
+    return beginInitialize(state.value === 'error')
+  }
+
   function applyConfig(nextConfig: SiteConfig): void {
     // 保存设置后的回读结果比任何更早启动的初始化请求更新。
     initializeRevision += 1
     initializeInFlight = null
+    timeoutRetryCount = 0
+    clearRetryTimer()
     config.value = nextConfig
     state.value = 'ready'
     error.value = null

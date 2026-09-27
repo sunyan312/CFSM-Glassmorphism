@@ -3548,6 +3548,18 @@ a {
   background: rgb(255 255 255 / 15%);
 }
 
+.detail-network-card--daily {
+  grid-column: 1 / -1;
+}
+
+.detail-network-card__daily-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 :root[data-theme='dark'] .detail-network-card {
   background: rgb(255 255 255 / 5%);
 }

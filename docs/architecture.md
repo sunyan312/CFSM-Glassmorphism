@@ -71,6 +71,7 @@ v1.1.12 维护预览没有更改 adapter、normalized model 或 wire 契约。�
 - 兼容 `gpu_info` 的数组/JSON 字符串和历史磁盘 IO 两种形状。
 - Server 与 History 都在 adapter 边界解析 `gpu_info`；History 图表模型只读取归一化后的 `HistoryPoint.gpus`。
 - 不补历史点，不伪造 IP/ASN/城市/厂商，不把错误格式变成看似真实的数据。
+- 近 24 小时流量由独立的 `traffic24h` store 读取节点所属来源的 24 小时历史，并在详情页挂载期间每 5 分钟更新；网卡累计字节的正差计算放在 `domain/traffic24h.ts`，缺少样本则显示缺失值。
 - `src/services/cfsm/glassmorphism-adapter.ts` 再把稳定 CFSM 模型映射为首页展示模型；可达性仍是状态，不成为地址字符串。
 
 ### 汇率（v1.1.7）
@@ -85,7 +86,7 @@ v1.1.12 维护预览没有更改 adapter、normalized model 或 wire 契约。�
 
 位置：`src/stores/`。
 
-- `app.ts` 管理 apiBases、站点 config、加载状态与官方管理端地址。并发消费者共享同一个配置请求；revision 阻止旧初始化覆盖保存后的回读，暂时失败时保留最后一份真实配置。
+- `app.ts` 管理 apiBases、站点 config、加载状态与官方管理端地址。并发消费者共享同一个配置请求；revision 阻止旧初始化覆盖保存后的回读，暂时失败时保留最后一份真实配置。配置请求超时后按 2/5/15 秒在后台最多重试三次；自动与手动重试期间保留错误提示和已独立加载的节点，成功后自动清除提示，首页也提供手动重试入口。
 - `servers.ts` 管理按来源分开的集合，以 `base::id` 作为稳定键，避免不同站点 UUID 冲突。
 - `servers.ts` 也按来源合并实时 partial sample，未知节点不会由 WebSocket 凭空创建；REST 暂时失败时保留该来源上一份真实快照。首页与详情共享进行中的列表请求；请求期间实际应用的 WSS 样本按收到顺序重放到新 REST 节点上，字段归属只由 `mergeRealtimeSample` 决定，因此新 REST 名称、标签等静态字段不会被整台旧对象挡住。`clear()` 会使在途响应失效。
 - `realtime.ts` 管理首页实时协调器的生命周期、每个来源的连接状态、五分钟离线过期、降级提示和超时后的继续/暂停动作。
